@@ -23,7 +23,7 @@ class Client:
     def __init__(self, server_address=default_server_address, server_port=default_server_port):
         self.server_address = server_address
         self.server_port = server_port
-        self.name = None                    # NOTE: do not remove the attribute from your client implementation, but use it to store the registered username associated to this client. This is a pre-condition for some of our grading tests to work correctly.
+        self.name = None  # NOTE: do not remove the attribute from your client implementation, but use it to store the registered username associated to this client. This is a pre-condition for some of our grading tests to work correctly.
 
     # NOTE: do not modify open_connection
     @asyncio.coroutine
@@ -52,7 +52,26 @@ class Client:
                 print('The server closed the connection.')
                 writer.close()
                 break
-            print('\n[public] %s' % net_message.decode())
+            elif '[error]' in net_message.decode():
+                message = net_message.decode()
+                print( message )
+                print('>> ',end='',flush=True)
+                continue
+            elif '@' in net_message.decode():
+                if '@client' in net_message.decode():
+                    message = net_message.decode()
+                    sentance = message[message.find("@client ")+8 :]
+                    print('[server] ' +  sentance )
+                    print('>> ',end='',flush=True)
+                    continue
+                else: 
+                    message = net_message.decode()
+                    sentance = message[message.index(' ') + 1:]
+                    print('[private] ' +  sentance )
+                    print('>> ',end='',flush=True)
+                    continue
+
+            print('[public] %s' % net_message.decode())
             print('>> ',end='',flush=True)
 
     # NOTE: you can modify the implementation of send_to_server (but not its signature)
@@ -74,7 +93,7 @@ class Client:
             if not writer.transport.is_closing():
                 writer.close()
 
-    # NOTE: do not modify run
+    # NOTE: do NOT modify run
     def run(self):
         try:
             loop = asyncio.get_event_loop()
@@ -90,4 +109,4 @@ class Client:
 # NOTE: do not modify the following two lines
 if __name__ == '__main__':
     Client().run()
-
+    
