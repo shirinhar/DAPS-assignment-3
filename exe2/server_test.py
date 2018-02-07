@@ -28,8 +28,7 @@ class FakeReader:
         return ''
 
 class FakeWriter:
-    #changed the header from extra_info = 'fake writer'
-    def __init__(self,extra_info):
+    def __init__(self,extra_info = 'fake_writer'):
         self.extra_info = extra_info
         self.writer = io.BytesIO()
         self.open()
@@ -42,7 +41,6 @@ class FakeWriter:
     
     def get_extra_info(self,string):
         return self.extra_info
-
 
     @asyncio.coroutine
     def drain(self):
@@ -61,6 +59,9 @@ class FakeWriter:
 # Tests #
 #########
 
+
+
+
 class TestServerClass:
     def setup_method(self,method):
         self.testserver = server.Server()
@@ -69,6 +70,10 @@ class TestServerClass:
         self.other_fake_writer = FakeWriter('fake client 2')
         self.testserver.all_clients = set([self.fake_writer,self.other_fake_writer])
 
+    # get username from message
+    def get_id(self,message):
+        return (message[message.find("(")+1:message.find(")")])
+
     # Check that the server can handle setting names for users
     def test_username_setup(self,capsys):
         message = '@server set_my_id(user1)'
@@ -76,7 +81,7 @@ class TestServerClass:
         self.loop.run_until_complete(self.testserver.handle_connection(
                                     fake_reader , self.fake_writer))
         assert len(self.other_fake_writer.getvalue()) == 0
-        sent_message = ('@client username set to '+ message[message.find("(")+1:message.find(")")])
+        sent_message = ('@client username set to '+ self.get_id(message))
         assert sent_message.encode() in self.fake_writer.getvalue()
         assert self.fake_writer.get_extra_info('').encode() \
                                 not in self.other_fake_writer.getvalue()
@@ -96,7 +101,7 @@ class TestServerClass:
         sent_message = ('[error] username must be set to send messages.')
         assert sent_message.encode() in self.fake_writer.getvalue()
         """assert self.fake_writer.get_extra_info('').encode() \
-                                                                                in self.other_fake_writer.getvalue()"""
+                                     in self.other_fake_writer.getvalue()"""
         expected_out_msg1 = 'Received {} from {}'.format(
                  message, self.fake_writer.get_extra_info(''))
         expected_out_msg2 = 'Closing connection with client' 
@@ -106,16 +111,98 @@ class TestServerClass:
         assert len(err) == 0
 
     def test_username_error(self,capsys):
-        message = '@server set_my_ip(user1)'
-        fake_reader = FakeReader([message])
+        message1 = '@server set_my_ip(user1)'
+        message2 = '@server set_my_id(user 1)'
+        message3 = '@server set_my_id(client)'
+        messages = [message1,message2,message3]
+        fake_reader = FakeReader(messages)
         self.loop.run_until_complete(self.testserver.handle_connection(
                                     fake_reader , self.fake_writer))
         assert len(self.other_fake_writer.getvalue()) == 0
-        sent_message = ('@client ERROR - Incorrect Input')
-        assert sent_message.encode() in self.fake_writer.getvalue()
+        sent_message_1 = ('@client ERROR - Incorrect Input')
+        sent_message_2 = ('[error] Username cannot have spaces')
+        sent_message_3 = ('[error] Incorrect user name chosen. User names cannot be "server" or "client" ')
+        assert sent_message_1.encode() in self.fake_writer.getvalue()
+        assert sent_message_2.encode() in self.fake_writer.getvalue()
+        assert sent_message_3.encode() in self.fake_writer.getvalue()
         """assert self.fake_writer.get_extra_info('').encode() \
                                                        in self.other_fake_writer.getvalue()"""
-        expected_out_msg1 = 'Received {}'.format(message)
+        assert self.fake_writer not in self.testserver.all_clients
+        assert len(self.testserver.all_clients) == 1
+        expected_out_msg1 = 'Received {} from {}'.format(
+                 message1, self.fake_writer.get_extra_info(''))
+        expected_out_msg2 = 'Received {} from {}'.format(
+                 message2, self.fake_writer.get_extra_info(''))
+        expected_out_msg3 = 'Received {} from {}'.format(
+                 message3, self.fake_writer.get_extra_info(''))
+        expected_out_msg4 = 'Closing connection with client' 
+        out, err = capsys.readouterr()
+        assert expected_out_msg1 in out
+        assert expected_out_msg2 in out
+        assert expected_out_msg3 in out
+        assert expected_out_msg4 in out
+        assert len(err) == 0
+
+    def test_change_username(self,capsys):
+        message1 = '@server set_my_id(user1)'
+        message2 = '@server set_my_id(user2)'
+        messages = [message1,message2]
+        fake_reader = FakeReader(messages)
+        self.loop.run_until_complete(self.testserver.handle_connection(
+                                    fake_reader , self.fake_writer))
+        sent_message_1 = ('@client username set to '+ self.get_id(message1))
+        sent_message_2 = ('@client username set to '+ self.get_id(message2))
+        print (self.fake_writer.getvalue())
+        assert len(self.testserver.all_clients) == 1
+        assert sent_message_1.encode() in self.fake_writer.getvalue()
+        assert sent_message_2.encode() in self.fake_writer.getvalue()
+        expected_out_msg1 = 'Received {} from {}'.format((message1),self.get_id(message1))
+        expected_out_msg2 = 'Received {} from {}'.format((message2),self.get_id(message2))
+        expected_out_msg3 = 'Closing connection with client' 
+        out, err = capsys.readouterr()
+        assert expected_out_msg1 in out
+        assert expected_out_msg2 in out
+        assert expected_out_msg3 in out
+        assert len(err) == 0
+
+    # other cleint name not defined
+    def test_public_message(self,capsys):
+        message1 = '@server set_my_id(user1)'
+        message2 = 'hi there'
+        messages = [message1,message2]
+        fake_reader = FakeReader(messages)
+        self.loop.run_until_complete(self.testserver.handle_connection(
+                                    fake_reader, self.fake_writer))
+        #assert len(self.other_fake_writer.getvalue()) == 0
+        sent_message_1 = ('@client username set to '+ self.get_id(message1))
+        sent_message_2 = ('{}: {}'.format(self.get_id(message1),message2))
+        assert sent_message_1.encode() in self.fake_writer.getvalue()
+        assert sent_message_2.encode() in self.other_fake_writer.getvalue()
+        """assert self.fake_writer.get_extra_info('').encode() \
+                                                        not in self.fake_writer.getvalue()"""
+        expected_out_msg1 = 'Received {} from {}'.format((message1),self.get_id(message1))
+        expected_out_msg2 = 'Received {} from'.format((message1))
+        expected_out_msg3 = 'Closing connection with client' 
+        out, err = capsys.readouterr()
+        assert expected_out_msg1 in out
+        assert expected_out_msg2 in out
+        assert expected_out_msg3 in out
+        assert len(err) == 0
+
+    def test_permission_repeated_username(self,capsys):
+        message1 = '@server set_my_id(user1)'
+        messages = [message1,message1]
+        fake_reader = FakeReader(messages)
+        self.loop.run_until_complete(self.testserver.handle_connection(
+                                    fake_reader, self.fake_writer))
+        #assert len(self.other_fake_writer.getvalue()) == 0
+        sent_message_1 = ('@client username set to '+ self.get_id(message1))
+        sent_message_2 = ('@client ERROR - Name is already in use')
+        assert sent_message_1.encode() in self.fake_writer.getvalue()
+        assert sent_message_2.encode() in self.fake_writer.getvalue()
+        """assert self.fake_writer.get_extra_info('').encode() \
+                                                        not in self.fake_writer.getvalue()"""
+        expected_out_msg1 = 'Received {} from {}'.format((message1),self.get_id(message1))
         expected_out_msg2 = 'Closing connection with client' 
         out, err = capsys.readouterr()
         assert expected_out_msg1 in out
