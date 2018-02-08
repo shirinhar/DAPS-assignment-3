@@ -1,112 +1,199 @@
-import sys, asyncio
-import aioconsole
+import io, pytest, asyncio, mock, aioconsole
+import client
 
-#####################
-# Custom exceptions #
-#####################
+#########
+# Mocks #
+#########
 
-class NoneException(Exception):
-    pass
+class FakeReader:
+    def __init__(self,predefined_content_list,output_pace=0.1):
+        self.delay = output_pace
+        if predefined_content_list == None:
+            self.messages = None
+        else:
+            self.messages = list(predefined_content_list)
 
-class ClosingException(Exception):
-    pass
-
-################
-# Client class #
-################
-
-class Client:
-    default_server_address = '127.0.0.1'
-    default_server_port = 8888
-
-    # NOTE: you can modify __init__
-    def __init__(self, server_address=default_server_address, server_port=default_server_port):
-        self.server_address = server_address
-        self.server_port = server_port
-        self.name = None  # NOTE: do not remove the attribute from your client implementation, but use it to store the registered username associated to this client. This is a pre-condition for some of our grading tests to work correctly.
-
-    # NOTE: do not modify open_connection
     @asyncio.coroutine
-    def open_connection(self,loop):
-        reader, writer = yield from asyncio.open_connection(
-                        self.server_address, self.server_port, loop=loop)
-        return reader, writer
+    def read(self, length):
+        yield from asyncio.sleep(self.delay)
+        if self.messages == None:
+            return None
+        if len(self.messages) > 0:
+            m = self.messages.pop(0)
+            if m == None:
+                return None
+            return m.encode()
+        return ''
+
+class FakeTransport:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+        
+    def is_closing(self):
+        return self.closed
+
+class FakeWriter:
+    def __init__(self):
+        self.writer = io.BytesIO()
+        self.transport = FakeTransport()
+        self.open()
+
+    def write(self, data):
+        return self.writer.write(data)
+
+    def getvalue(self):
+        return self.writer.getvalue()
+
+    def close(self):
+        self.closed = True
+        self.transport.close()
     
-    # NOTE: do not modify use_connection
-    @asyncio.coroutine
-    def use_connection(self,reader, writer):
-        yield from asyncio.gather(self.read_from_network(reader,writer),
-                                            self.send_to_server(writer))
+    def open(self):
+        self.closed = False
 
-    # NOTE: you can modify the implementation of read_from_network (but not its signature)
-    @asyncio.coroutine
-    def read_from_network(self,reader,writer):
-        while True:
-            net_message = yield from reader.read(100)
-            if writer.transport.is_closing():
-                print('Terminating read from network.')
-                break
-            elif net_message == None:
-                continue
-            elif len(net_message) == 0:
-                print('The server closed the connection.')
-                writer.close()
-                break
-            elif '[error]' in net_message.decode():
-                message = net_message.decode()
-                print( message )
-                print('>> ',end='',flush=True)
-                continue
-            elif '@' in net_message.decode():
-                if '@client' in net_message.decode():
-                    message = net_message.decode()
-                    sentance = message[message.find("@client ")+8 :]
-                    print('[server] ' +  sentance )
-                    print('>> ',end='',flush=True)
-                    continue
-                else: 
-                    message = net_message.decode()
-                    sentance = message[message.index(' ') + 1:]
-                    print('[private] ' +  sentance )
-                    print('>> ',end='',flush=True)
-                    continue
+    def is_closed(self):
+        return self.closed
 
-            print('[public] %s' % net_message.decode())
-            print('>> ',end='',flush=True)
-
-    # NOTE: you can modify the implementation of send_to_server (but not its signature)
-    @asyncio.coroutine
-    def send_to_server(self,writer):
-        try:
-            while True:
-                original_message = yield from aioconsole.ainput('>> ')
-                if original_message != None:
-                    console_message = original_message.strip()
-                    if console_message == '':
-                        continue
-                    elif console_message == 'close()':
-                        raise ClosingException()
-                    writer.write(console_message.encode())
-        except ClosingException:
-            print('Got close() from user.')
-        finally:
-            if not writer.transport.is_closing():
-                writer.close()
-
-    # NOTE: do NOT modify run
-    def run(self):
-        try:
-            loop = asyncio.get_event_loop()
-            reader,writer=loop.run_until_complete(self.open_connection(loop))
-            loop.run_until_complete(self.use_connection(reader,writer))
-        except KeyboardInterrupt:
-            print('Got Ctrl-C from user.')
-        except Exception as e:
-            print(e,file=sys.stderr)
-        finally:
-            loop.close()
-
-# NOTE: do not modify the following two lines
-if __name__ == '__main__':
-    Client().run()
+class FakeConsole:
+    def __init__(self,predefined_content=[],output_pace=0,final_message='close()'):
+        self.delay = output_pace
+        if predefined_content == None:
+            self.messages = None
+        else:
+            self.messages = list(predefined_content)
+        self.final_string = final_message
     
+    @asyncio.coroutine
+    def fake_console_read(self,prompt):
+        yield from asyncio.sleep(self.delay)
+        if self.messages == None:
+            return None
+        if len(self.messages) > 0:
+            return self.messages.pop(0)
+        else:
+            return self.final_string
+
+#########
+# Tests #
+#########
+
+class TestCorrectedClientClass:
+    def setup_method(self,method):
+        self.loop = asyncio.get_event_loop()        
+        self.fake_writer = FakeWriter()
+        self.testclient = client.Client()
+
+    # Check handling of interleaved read and write
+    # (client should read everything before the user closes)
+    def test_interleaved_messages(self,capsys):
+        reader_messages = ['Hello World!','That\'s all folks']
+        fake_reader = FakeReader(reader_messages)
+        console_messages = []
+        fake_console = FakeConsole(console_messages,output_pace=0.2)
+        with mock.patch('aioconsole.ainput',side_effect=\
+                fake_console.fake_console_read) as mock_console:
+            self.loop.run_until_complete(self.testclient.\
+                use_connection(fake_reader, self.fake_writer))
+        assert mock_console.call_count == len(console_messages) + 1
+        out, err = capsys.readouterr()
+        for message in console_messages:
+            assert message.encode() in self.fake_writer.getvalue()
+            assert '[public] %r' % message in out
+        assert 'Got close() from user.' in out
+        assert len(err) == 0
+
+    # Check handling of multiple messages 
+    def test_exchange_two_messages(self,capsys):
+        messages = ['Hello World!','That\'s all folks']
+        fake_reader = FakeReader(messages)
+        fake_console = FakeConsole(messages,output_pace=0.2)
+        with mock.patch('aioconsole.ainput',side_effect=\
+                fake_console.fake_console_read) as mock_console:
+            self.loop.run_until_complete(self.testclient.\
+                use_connection(fake_reader, self.fake_writer))
+        assert mock_console.call_count == len(messages) + 1
+        out, err = capsys.readouterr()
+        for message in messages:
+            assert message.encode() in self.fake_writer.getvalue()
+            assert '[public] %s' % message in out
+        assert 'Got close() from user.' in out
+        assert len(err) == 0
+
+    # Check that the client sends out the exact input message
+    # and that it prints exactly what the server answers
+    def test_happy_path_one_message(self,capsys):
+        message = 'Hello World!'
+        fake_reader = FakeReader([message])
+        fake_console = FakeConsole([message],output_pace=0.2)
+        with mock.patch('aioconsole.ainput',side_effect=fake_console.fake_console_read)\
+                as mock_console:
+            self.loop.run_until_complete(
+                self.testclient.use_connection(fake_reader, self.fake_writer))
+        assert mock_console.call_count == 2
+        assert self.fake_writer.getvalue() == message.encode()
+        assert self.fake_writer.is_closed()
+        out, err = capsys.readouterr()
+        assert '[public] %s' % message in out.strip()
+        assert 'Got close() from user' in out.strip()
+        assert len(err) == 0
+
+    # Check that the client does not send any None message 
+    def test_none_messages(self,capsys):
+        message = None
+        fake_reader = FakeReader([],output_pace=0.1)
+        fake_console = FakeConsole([message])
+        with mock.patch('aioconsole.ainput',side_effect=fake_console.fake_console_read)\
+                as mock_console:
+            self.loop.run_until_complete(
+                self.testclient.use_connection(fake_reader, self.fake_writer))
+        assert mock_console.call_count == 2
+        assert len(self.fake_writer.getvalue()) == 0
+        out, err = capsys.readouterr()
+        assert 'Got close() from user.' in out
+        assert 'Terminating read from network.' in out
+        assert len(err) == 0
+
+    # Check that the client does not send any empty message 
+    def test_happy_path_empty_console_message(self,capsys):
+        message = ''
+        fake_reader = FakeReader([message],output_pace=0.1)
+        fake_console = FakeConsole([message])
+        with mock.patch('aioconsole.ainput',side_effect=fake_console.fake_console_read)\
+                as mock_console:
+            self.loop.run_until_complete(
+                self.testclient.use_connection(fake_reader, self.fake_writer))
+        assert mock_console.call_count == 2
+        assert len(self.fake_writer.getvalue()) == 0
+        out, err = capsys.readouterr()
+        assert 'Got close() from user.' in out
+        assert 'Terminating read from network.' in out
+        assert len(err) == 0
+
+    # Check that the client does close as expected, when the user 
+    # asks to do so
+    def test_happy_path_close_from_user(self,capsys):
+        fake_reader = FakeReader([])
+        fake_console = FakeConsole([])
+        with mock.patch('aioconsole.ainput',side_effect=fake_console.fake_console_read)\
+                as mock_console:
+            self.loop.run_until_complete(
+                self.testclient.use_connection(
+                    fake_reader, self.fake_writer))
+        assert mock_console.call_count == 1
+        assert len(self.fake_writer.getvalue()) == 0
+        assert self.fake_writer.is_closed()
+        out, err = capsys.readouterr()
+        assert 'Got close() from user' in out.strip()
+        assert len(err) == 0
+
+    # Opening a connection towards a closed IP address and port
+    # should raise no exception, and print a message on stderr
+    def test_failed_open_connection(self,capsys):
+        self.testclient.run()
+        out, err = capsys.readouterr()
+        assert len(out) == 0
+        assert '[Errno 61] Connect call failed' in err
+
