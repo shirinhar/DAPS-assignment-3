@@ -7,10 +7,7 @@ import os, sys
 # TODO: implement here the mocks that enable the tests in tail_reader_test.py to run
 
 def fake_get_filesize(filename):
-	if filename == None or filename == "''":
-		return 0
-	
-	return os.stat(filename).st_size
+	return 2
 	
 
 class FakeFileHandler():
