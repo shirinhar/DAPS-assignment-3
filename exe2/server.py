@@ -24,7 +24,7 @@ class Server:
         elif new_username == 'server' or new_username == 'client':
             new_message = ('[error] Incorrect user name chosen. User names cannot be "server" or "client" ')
         elif (new_username in self.users.values()):
-            new_message = ('@client ERROR - Name is already in use')
+            new_message = ('@client ERROR Name is already in use')
         else:
             #self.users.append(chosen_name)
             self.users[writer] = new_username
@@ -74,7 +74,7 @@ class Server:
                         client_addr = chosen_name
                         self.client_addr_bool = False
                 else:
-                    new_message = ('@client ERROR - Incorrect Input')
+                    new_message = ('@client ERROR Incorrect Input')
 
                 #self.send_to_client(new_message,writer)
                 writer.write(new_message.encode())
@@ -86,7 +86,7 @@ class Server:
             elif client_addr not in self.users.values():
                 for other_writer in self.all_clients:
                     if other_writer == writer:
-                        text = '[error] username must be set to send messages.'
+                        text = '@client ERROR username must be set to send messages.'
                         other_writer.write(text.encode())
                         yield from other_writer.drain()
                         print("Received {} from {}".format(message, client_addr))   
@@ -96,6 +96,7 @@ class Server:
                 check = False
                 for other_writer in self.users:  
                     if splitted[0] == ('@' + self.users[other_writer]): 
+                        #maybe delete this?????????????
                         if other_writer == writer:
                             check = True
                             other_writer.write(('[error] cannot send private message to yourself').encode())
@@ -108,7 +109,7 @@ class Server:
                         yield from other_writer.drain()
                         print("Received {} from {}".format(message, client_addr))
                 if check == False:
-                    new_message = ('[error] Inavlid input')
+                    new_message = ('@client ERROR Inavlid input')
                     for other_writer in self.all_clients:
                         if other_writer == writer:
                             other_writer.write(new_message.encode())
@@ -116,15 +117,6 @@ class Server:
                             print("Received {} from {}".format(message, client_addr))   
                 continue
             
-            """if client_addr == client_addr_copy:
-                for other_writer in self.all_clients:
-                    if other_writer == writer:
-                        text = 'Username must be set to send messages.\nSet username by writting @server set_my_id(<username>)'
-                        other_writer.write(text.encode())
-                        yield from other_writer.drain()
-                        print("Received {} from {}".format(message, self.client_addr))   
-                continue"""
-
             print("Received {} from {}".format(message, client_addr))
             for other_writer in self.all_clients:
                 if other_writer != writer:
@@ -160,4 +152,3 @@ class Server:
 # NOTE: do not modify the following two lines
 if __name__ == '__main__':
     Server().run()
-
