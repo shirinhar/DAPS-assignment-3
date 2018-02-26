@@ -58,7 +58,13 @@ class Client:
                 print('>> ',end='',flush=True)
                 continue
             elif '@' in net_message.decode():
-                if '@client' in net_message.decode():
+                if '@client ERROR' in net_message.decode():
+                    message = net_message.decode()
+                    sentance = message[message.find("@client ERROR ")+14 :]
+                    print('[error] ' +  sentance )
+                    print('>> ',end='',flush=True)
+                    continue
+                elif '@client' in net_message.decode():
                     message = net_message.decode()
                     sentance = message[message.find("@client ")+8 :]
                     print('[server] ' +  sentance )
@@ -86,6 +92,25 @@ class Client:
                         continue
                     elif console_message == 'close()':
                         raise ClosingException()
+                    elif '@server' in console_message:
+                        if 'set_my_id(' in console_message and ')' in console_message:
+                            chosen_name = console_message[console_message.find("(")+1:console_message.find(")")]
+                            if (' ' in chosen_name):
+                                print ('>> [error] Username cannot have spaces')
+                                continue
+                            elif chosen_name == 'server' or chosen_name == 'client':
+                                print ('>> [error] Incorrect user name chosen. user names cannot be "server" or "client" or the same as another')
+                                continue
+                            else:
+                                self.name = chosen_name
+                        # must be sent to the server
+                        """else:
+                            print ('>> @client ERROR - Incorrect Input')
+                            continue """   
+                    elif self.name != None: 
+                        if ('@' + self.name) in console_message:
+                            print ('>> cannot send private message to yourself')
+                            continue
                     writer.write(console_message.encode())
         except ClosingException:
             print('Got close() from user.')
