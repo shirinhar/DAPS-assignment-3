@@ -232,26 +232,6 @@ class TestServerClass:
         assert expected_out_msg2 in out
         assert len(err) == 0
 
-    def test_private_message_to_self(self,capsys):
-        message1 = '@server set_my_id(user1)'
-        message2 = '@user1 hey there'
-        messages = [message1,message2]
-        fake_reader = FakeReader(messages)
-        self.loop.run_until_complete(self.testserver.handle_connection(
-                                    fake_reader, self.fake_writer))
-        #assert len(self.other_fake_writer.getvalue()) == 0
-        sent_message_1 = ('@client username set to '+ self.get_id(message1))
-        sent_message_2 = ('[error] cannot send private message to yourself')
-        assert sent_message_1.encode() in self.fake_writer.getvalue()
-        assert sent_message_2.encode() in self.fake_writer.getvalue()
-        """assert self.fake_writer.get_extra_info('').encode() \
-                                                        not in self.fake_writer.getvalue()"""
-        expected_out_msg1 = 'Received {} from {}'.format((message1),self.get_id(message1))
-        expected_out_msg2 = 'Closing connection with client' 
-        out, err = capsys.readouterr()
-        assert expected_out_msg1 in out
-        assert expected_out_msg2 in out
-        assert len(err) == 0
 
     def test_private_message_to_nonexistent_user(self,capsys):
         message1 = '@server set_my_id(user1)'
@@ -289,4 +269,5 @@ class TestServerClass:
             assert not self.other_fake_writer.is_closed()
             self.fake_writer.open()
             assert not self.fake_writer.is_closed()
+
 
