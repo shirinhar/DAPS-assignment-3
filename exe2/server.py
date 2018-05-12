@@ -1,272 +1,149 @@
-import io, pytest, asyncio, os, time, mock
-import server
-import aioconsole
+import sys, asyncio
 
+################
+# Server class #
+################
 
-# NOTE: the following tests are not compliant with the new functionalities that you will need to implement in this exercise. Feel free to remove them, and replace them with your own tests of the new functionalities.
+class Server:
+    default_server_address = '127.0.0.1'
+    default_server_port = 8888
 
-#########
-# Mocks #
-#########
+    # NOTE: you can modify __init__
+    def __init__(self,server_address=default_server_address,server_port=default_server_port):
+        self.address = server_address
+        self.port = server_port
+        self.all_clients = set([])
+        self.users = {}
+        self.client_addr_bool = False
 
-class FakeReader:
-    def __init__(self,predefined_content_list,output_pace=0):
-        self.delay = output_pace
-        if predefined_content_list == None:
-            self.messages = None
+    # NOTE: the following method must be implemented for some of our grading tests to work. If you don't implement this method correctly, you will lose some marks!
+    # method for registering usernames 
+    def set_username(self,new_username,writer,old_username=None):
+        if (' ' in new_username):
+            new_message = ('[error] Username cannot have spaces')
+        elif new_username == 'server' or new_username == 'client':
+            new_message = ('[error] Incorrect user name chosen. User names cannot be "server" or "client" ')
+        elif (new_username in self.users.values()):
+            new_message = ('@client ERROR Name is already in use')
         else:
-            self.messages = list(predefined_content_list)
+            #self.users.append(chosen_name)
+            self.users[writer] = new_username
+            #self.client_addr = new_username
+            self.client_addr_bool = True
+            new_message = ('@client username set to ' + new_username)
+            #HOW THE FUCK DO I DO THAT?!
+        return new_message     
+        pass
     
+    # NOTE: this method must be implemented for some of our grading tests to work. If you don't implement this method correctly, you will lose some marks!
+    # method that returns all the registered usernames as a list
+    def get_registered_usernames_list(self):
+        user_list = []
+        for writer in self.users: 
+            user_list.append(self.users[writer])
+        for i in range(len(user_list)): 
+            print (user_list[i] + "\n")
+        return user_list
+        pass
+
+
+    # NOTE: you can modify the implementation of handle_connection (but not its signature)
     @asyncio.coroutine
-    def read(self, length):
-        yield from asyncio.sleep(self.delay)
-        if self.messages == None:
-            return None
-        if len(self.messages) > 0:
-            message = self.messages.pop(0)
-            if message == None:
-                return None
-            return message.encode()
-        return ''
+    def handle_connection(self, reader, writer):
+        self.all_clients.add(writer)
+        client_addr  = writer.get_extra_info('peername')
+        client_addr_copy = client_addr
+        print('New client {}'.format(client_addr))
+        while True:
+            data = yield from reader.read(100)
+            if data == None or len(data) == 0:
+                break
+            message = data.decode()
+            splitted = message.split()
+            if '@server' in message:
+                if 'set_my_id(' in message and ')' in message:
+                    chosen_name = message[message.find("(")+1:message.find(")")]
+                    new_message = self.set_username(chosen_name,writer)
+                    if self.client_addr_bool:
+                        client_addr = chosen_name
+                        self.client_addr_bool = False
+                else:
+                    new_message = ('@client ERROR Incorrect Input')
 
-class FakeWriter:
-    def __init__(self,extra_info = 'fake_writer'):
-        self.extra_info = extra_info
-        self.writer = io.BytesIO()
-        self.open()
+                #self.send_to_client(new_message,writer)
+                writer.write(new_message.encode())
+                yield from writer.drain()
+                print("Received {} from {}".format(message, client_addr))
+                continue
 
-    def write(self, data):
-        return self.writer.write(data)
+            # no need to traverse you can use the key and value
+            elif client_addr not in self.users.values():
+                for other_writer in self.all_clients:
+                    if other_writer == writer:
+                        text = '@client ERROR username must be set to send messages.'
+                        other_writer.write(text.encode())
+                        yield from other_writer.drain()
+                        print("Received {} from {}".format(message, client_addr))   
+                continue
 
-    def getvalue(self):
-        return self.writer.getvalue()
-    
-    def get_extra_info(self,string):
-        return self.extra_info
-
-    @asyncio.coroutine
-    def drain(self):
-        self.writer.flush()
-
-    def close(self):
-        self.closed = True
-    
-    def open(self):
-        self.closed = False
-
-    def is_closed(self):
-        return self.closed
-
-class FakeConsole:
-    def __init__(self,predefined_content=[],output_pace=0,final_message='close()'):
-        self.delay = output_pace
-        if predefined_content == None:
-            self.messages = None
-        else:
-            self.messages = list(predefined_content)
-        self.final_string = final_message
-    
-    @asyncio.coroutine
-    def fake_console_read(self,prompt):
-        yield from asyncio.sleep(self.delay)
-        if self.messages == None:
-            return None
-        if len(self.messages) > 0:
-            return self.messages.pop(0)
-        else:
-            return self.final_string
-    
-#########
-# Tests #
-#########
-
-
-
-
-class TestServerClass:
-    def setup_method(self,method):
-        self.testserver = server.Server()
-        self.loop = asyncio.get_event_loop()        
-        self.fake_writer = FakeWriter('fake client 1')
-        self.other_fake_writer = FakeWriter('fake client 2')
-        self.testserver.all_clients = set([self.fake_writer,self.other_fake_writer])
-
-    # get username from message
-    def get_id(self,message):
-        return (message[message.find("(")+1:message.find(")")])
-
-    # Check that the server can handle setting names for users
-    def test_username_setup(self,capsys):
-        message = '@server set_my_id(user1)'
-        fake_reader = FakeReader([message])
-        self.loop.run_until_complete(self.testserver.handle_connection(
-                                    fake_reader , self.fake_writer))
-        assert len(self.other_fake_writer.getvalue()) == 0
-        sent_message = ('@client username set to '+ self.get_id(message))
-        assert sent_message.encode() in self.fake_writer.getvalue()
-        assert self.fake_writer.get_extra_info('').encode() \
-                                not in self.other_fake_writer.getvalue()
-        expected_out_msg1 = 'Received {}'.format(message)
-        expected_out_msg2 = 'Closing connection with client' 
-        out, err = capsys.readouterr()
-        assert expected_out_msg1 in out
-        assert expected_out_msg2 in out
-        assert len(err) == 0
-
-    # If username not set error will be sent
-    def test_unset_username(self,capsys):
-        message = 'Hello World!'
-        fake_reader = FakeReader([message])
-        self.loop.run_until_complete(self.testserver.handle_connection(
-                                     fake_reader, self.fake_writer))
-        assert len(self.other_fake_writer.getvalue()) == 0
-        sent_message = ('@client ERROR username must be set to send messages.')
-        assert sent_message.encode() in self.fake_writer.getvalue()
-        """assert self.fake_writer.get_extra_info('').encode() \
-                                     in self.other_fake_writer.getvalue()"""
-        expected_out_msg1 = 'Received {} from {}'.format(
-                 message, self.fake_writer.get_extra_info(''))
-        expected_out_msg2 = 'Closing connection with client' 
-        out, err = capsys.readouterr()
-        assert expected_out_msg1 in out
-        assert expected_out_msg2 in out
-        assert len(err) == 0
-
-    def test_username_error(self,capsys):
-        message1 = '@server set_my_ip(user1)'
-        message2 = '@server set_my_id(user 1)'
-        message3 = '@server set_my_id(client)'
-        messages = [message1,message2,message3]
-        fake_reader = FakeReader(messages)
-        self.loop.run_until_complete(self.testserver.handle_connection(
-                                    fake_reader , self.fake_writer))
-        assert len(self.other_fake_writer.getvalue()) == 0
-        sent_message_1 = ('@client ERROR Incorrect Input')
-        sent_message_2 = ('[error] Username cannot have spaces')
-        sent_message_3 = ('[error] Incorrect user name chosen. User names cannot be "server" or "client" ')
-        assert sent_message_1.encode() in self.fake_writer.getvalue()
-        assert sent_message_2.encode() in self.fake_writer.getvalue()
-        assert sent_message_3.encode() in self.fake_writer.getvalue()
-        """assert self.fake_writer.get_extra_info('').encode() \
-                                                       in self.other_fake_writer.getvalue()"""
-        assert self.fake_writer not in self.testserver.all_clients
-        assert len(self.testserver.all_clients) == 1
-        expected_out_msg1 = 'Received {} from {}'.format(
-                 message1, self.fake_writer.get_extra_info(''))
-        expected_out_msg2 = 'Received {} from {}'.format(
-                 message2, self.fake_writer.get_extra_info(''))
-        expected_out_msg3 = 'Received {} from {}'.format(
-                 message3, self.fake_writer.get_extra_info(''))
-        expected_out_msg4 = 'Closing connection with client' 
-        out, err = capsys.readouterr()
-        assert expected_out_msg1 in out
-        assert expected_out_msg2 in out
-        assert expected_out_msg3 in out
-        assert expected_out_msg4 in out
-        assert len(err) == 0
-
-    def test_change_username(self,capsys):
-        message1 = '@server set_my_id(user1)'
-        message2 = '@server set_my_id(user2)'
-        messages = [message1,message2]
-        fake_reader = FakeReader(messages)
-        self.loop.run_until_complete(self.testserver.handle_connection(
-                                    fake_reader , self.fake_writer))
-        sent_message_1 = ('@client username set to '+ self.get_id(message1))
-        sent_message_2 = ('@client username set to '+ self.get_id(message2))
-        print (self.fake_writer.getvalue())
-        assert len(self.testserver.all_clients) == 1
-        assert sent_message_1.encode() in self.fake_writer.getvalue()
-        assert sent_message_2.encode() in self.fake_writer.getvalue()
-        expected_out_msg1 = 'Received {} from {}'.format((message1),self.get_id(message1))
-        expected_out_msg2 = 'Received {} from {}'.format((message2),self.get_id(message2))
-        expected_out_msg3 = 'Closing connection with client' 
-        out, err = capsys.readouterr()
-        assert expected_out_msg1 in out
-        assert expected_out_msg2 in out
-        assert expected_out_msg3 in out
-        assert len(err) == 0
-
-    # other cleint name not defined
-    def test_public_message(self,capsys):
-        message1 = '@server set_my_id(user1)'
-        message2 = 'hi there'
-        messages = [message1,message2]
-        fake_reader = FakeReader(messages)
-        #self.other_fake_writer.write(message2)
-        self.loop.run_until_complete(self.testserver.handle_connection(
-                                    fake_reader, self.fake_writer))
-        #assert len(self.other_fake_writer.getvalue()) == 0
-        sent_message_1 = ('@client username set to '+ self.get_id(message1))
-        sent_message_2 = ('{}: {}'.format(self.get_id(message1),message2))
-        assert sent_message_1.encode() in self.fake_writer.getvalue()
-        assert sent_message_2.encode() in self.other_fake_writer.getvalue()
-        """assert self.fake_writer.get_extra_info('').encode() \
-                                                        not in self.fake_writer.getvalue()"""
-        expected_out_msg1 = 'Received {} from {}'.format((message1),self.get_id(message1))
-        expected_out_msg2 = 'Received {} from'.format((message1))
-        expected_out_msg3 = 'Closing connection with client' 
-        out, err = capsys.readouterr()
-        assert expected_out_msg1 in out
-        assert expected_out_msg2 in out
-        assert expected_out_msg3 in out
-        assert len(err) == 0
-
-    def test_permission_repeated_username(self,capsys):
-        message1 = '@server set_my_id(user1)'
-        messages = [message1,message1]
-        fake_reader = FakeReader(messages)
-        self.loop.run_until_complete(self.testserver.handle_connection(
-                                    fake_reader, self.fake_writer))
-        #assert len(self.other_fake_writer.getvalue()) == 0
-        sent_message_1 = ('@client username set to '+ self.get_id(message1))
-        sent_message_2 = ('@client ERROR Name is already in use')
-        assert sent_message_1.encode() in self.fake_writer.getvalue()
-        assert sent_message_2.encode() in self.fake_writer.getvalue()
-        """assert self.fake_writer.get_extra_info('').encode() \
-                                                        not in self.fake_writer.getvalue()"""
-        expected_out_msg1 = 'Received {} from {}'.format((message1),self.get_id(message1))
-        expected_out_msg2 = 'Closing connection with client' 
-        out, err = capsys.readouterr()
-        assert expected_out_msg1 in out
-        assert expected_out_msg2 in out
-        assert len(err) == 0
-
-
-    def test_private_message_to_nonexistent_user(self,capsys):
-        message1 = '@server set_my_id(user1)'
-        message2 = '@user2 hey there'
-        messages = [message1,message2]
-        fake_reader = FakeReader(messages)
-        self.loop.run_until_complete(self.testserver.handle_connection(
-                                    fake_reader, self.fake_writer))
-        #assert len(self.other_fake_writer.getvalue()) == 0
-        sent_message_1 = ('@client username set to '+ self.get_id(message1))
-        sent_message_2 = ('@client ERROR Inavlid input')
-        assert sent_message_1.encode() in self.fake_writer.getvalue()
-        assert sent_message_2.encode() in self.fake_writer.getvalue()
-        """assert self.fake_writer.get_extra_info('').encode() \
-                                                        not in self.fake_writer.getvalue()"""
-        expected_out_msg1 = 'Received {} from {}'.format((message1),self.get_id(message1))
-        expected_out_msg2 = 'Closing connection with client' 
-        out, err = capsys.readouterr()
-        assert expected_out_msg1 in out
-        assert expected_out_msg2 in out
-        assert len(err) == 0
-
-
-
-    # If the input message is empty or None, the server
-    # should simply ignore it and close the connection
-    def test_none_or_empty_messages(self,capsys):
-        for fake_reader in [FakeReader(['']), FakeReader(None)]:
-            self.loop.run_until_complete(
-                self.testserver.handle_connection(
-                    fake_reader, self.fake_writer))
-            assert len(self.fake_writer.getvalue()) == 0
-            assert len(self.other_fake_writer.getvalue()) == 0
-            assert self.fake_writer.is_closed()
-            assert not self.other_fake_writer.is_closed()
-            self.fake_writer.open()
-            assert not self.fake_writer.is_closed()
+            elif ('@') in splitted[0]:
+                check = False
+                for other_writer in self.users:  
+                    if splitted[0] == ('@' + self.users[other_writer]): 
+                        #maybe delete this?????????????
+                        if other_writer == writer:
+                            check = True
+                            other_writer.write(('[error] cannot send private message to yourself').encode())
+                            yield from other_writer.drain()
+                            print("Received {} from {}".format(new_message, client_addr))   
+                            continue 
+                        check = True           
+                        other_message = ('@' + self.users[other_writer] + ' ' + client_addr  + ': ' + message[message.index(' ') + 1:])
+                        other_writer.write(other_message.encode())
+                        yield from other_writer.drain()
+                        print("Received {} from {}".format(message, client_addr))
+                if check == False:
+                    new_message = ('@client ERROR Inavlid input')
+                    for other_writer in self.all_clients:
+                        if other_writer == writer:
+                            other_writer.write(new_message.encode())
+                            yield from other_writer.drain()
+                            print("Received {} from {}".format(message, client_addr))   
+                continue
             
+            print("Received {} from {}".format(message, client_addr))
+            for other_writer in self.all_clients:
+                if other_writer != writer:
+                    new_message = '{}: {}'.format(client_addr,message)
+                    #new_message = '{}: {}'.format(client_addr,message)
+                    other_writer.write(new_message.encode())
+                    yield from other_writer.drain()      
+        print("Closing connection with client {}".format(client_addr))
+        writer.close()
+        self.all_clients.remove(writer)
+        self.users.pop(writer,None)
+
+    # NOTE: do not modify run
+    def run(self):
+        loop = asyncio.get_event_loop()
+        coro = asyncio.start_server(self.handle_connection,self.address,
+                                                    self.port,loop=loop)
+        server = loop.run_until_complete(coro)
+
+        print('Serving on {}'.format(server.sockets[0].getsockname()))
+        try:
+            loop.run_forever()
+        except KeyboardInterrupt:
+            print('\nGot keyboard interrupt, shutting down',file=sys.stderr)
+        
+        for task in asyncio.Task.all_tasks():
+            task.cancel()
+        server.close()
+        loop.run_until_complete(server.wait_closed())
+        loop.close()    
+
+
+# NOTE: do not modify the following two lines
+if __name__ == '__main__':
+    Server().run()
+
